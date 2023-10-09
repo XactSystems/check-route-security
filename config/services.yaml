@@ -1,0 +1,13 @@
+services:
+    # default configuration for services in *this* file
+    _defaults:
+        autowire: false      # Automatically injects dependencies in your services.
+        public: false
+        autoconfigure: true # Automatically registers your services as commands, event subscribers, etc.
+
+    Xact\CheckRouteSecurity\Command\CheckRouteSecurityCommand:
+        public: true
+        autowire: true
+        arguments:
+            $projectDir: '%kernel.project_dir%'
+            $excludeRoutes: '%xact_check_route_security.exclude_routes%'
