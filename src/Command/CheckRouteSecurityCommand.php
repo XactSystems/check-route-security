@@ -9,10 +9,11 @@ use ReflectionClass;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Routing\RouterInterface;
 
 class CheckRouteSecurityCommand extends Command
 {
-    protected const EXCLUDE_KNOWN_ROUTES = [
+    protected const EXCLUDE_KNOWN_PREFIXES = [
         'web_profiler',
         'twig',
     ];
@@ -20,16 +21,18 @@ class CheckRouteSecurityCommand extends Command
     protected string $projectDir;
     /** @var string[] */
     protected array $excludeRoutes;
+    protected RouterInterface $router;
 
     /**
      * @param string[] $excludeRoutes
      */
-    public function __construct(string $projectDir, array $excludeRoutes)
+    public function __construct(string $projectDir, array $excludeRoutes, RouterInterface $router)
     {
         parent::__construct(self::$commandName);
 
         $this->projectDir = $projectDir;
         $this->excludeRoutes = $excludeRoutes;
+        $this->router = $router;
     }
 
     /**
@@ -57,14 +60,13 @@ class CheckRouteSecurityCommand extends Command
     {
         $output->writeln('<info>Creating list of routes ...</info>');
 
-        $rawJsonRoutes = shell_exec("cd " . $this->projectDir . " && php bin/console debug:router --show-controllers --format=json");
-        $jsonRoutes = json_decode($rawJsonRoutes, true);
-
         // Get all valid routes
         $controllers = [];
-        foreach ($jsonRoutes as $route) {
-            if (isset($route['defaults']['_controller'])) {
-                $controller = $route['defaults']['_controller'];
+        $routes = $this->router->getRouteCollection();
+        foreach ($routes as $route) {
+            $defaults = $route->getDefaults();
+            if (isset($defaults['_controller'])) {
+                $controller = $defaults['_controller'];
 
                 if (!in_array($controller, $controllers, true) && strpos($controller, '::') !== false && !$this->isRouteExcluded($controller)) {
                     $controllers[] = $controller;
@@ -127,7 +129,7 @@ class CheckRouteSecurityCommand extends Command
 
     protected function isRouteExcluded(string $route): bool
     {
-        foreach (self::EXCLUDE_KNOWN_ROUTES as $exclude) {
+        foreach (self::EXCLUDE_KNOWN_PREFIXES as $exclude) {
             if (strncmp($route, $exclude, strlen($exclude)) === 0 || in_array($route, $this->excludeRoutes, true)) {
                 return true;
             }
