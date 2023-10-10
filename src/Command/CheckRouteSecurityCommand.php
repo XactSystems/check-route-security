@@ -9,7 +9,11 @@ use ReflectionClass;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\RouterInterface;
+use Symfony\Component\Security\Core\Authentication\Token\AnonymousToken;
+use Symfony\Component\Security\Core\Authorization\AccessDecisionManagerInterface;
+use Symfony\Component\Security\Core\Authorization\Voter\AuthenticatedVoter;
 
 class CheckRouteSecurityCommand extends Command
 {
@@ -22,17 +26,21 @@ class CheckRouteSecurityCommand extends Command
     /** @var string[] */
     protected array $excludeRoutes;
     protected RouterInterface $router;
+    protected AccessDecisionManagerInterface $accessDecisionManager;
+    protected string $secret;
 
     /**
      * @param string[] $excludeRoutes
      */
-    public function __construct(string $projectDir, array $excludeRoutes, RouterInterface $router)
+    public function __construct(string $projectDir, array $excludeRoutes, RouterInterface $router, AccessDecisionManagerInterface $accessDecisionManager)
     {
         parent::__construct(self::$commandName);
 
         $this->projectDir = $projectDir;
         $this->excludeRoutes = $excludeRoutes;
         $this->router = $router;
+        $this->accessDecisionManager = $accessDecisionManager;
+        $this->secret = md5((string)rand());
     }
 
     /**
@@ -60,23 +68,36 @@ class CheckRouteSecurityCommand extends Command
     {
         $output->writeln('<info>Creating list of routes ...</info>');
 
-        // Get all valid routes
+        $noSecurityCounter = 0;
+        $checkedCounter = 0;
         $controllers = [];
+
+        // Get all valid routes
         $routes = $this->router->getRouteCollection();
         foreach ($routes as $route) {
             $defaults = $route->getDefaults();
             if (isset($defaults['_controller'])) {
                 $controller = $defaults['_controller'];
 
-                if (!in_array($controller, $controllers, true) && strpos($controller, '::') !== false && !$this->isRouteExcluded($controller)) {
+                if (in_array($controller, $controllers, true) || strpos($controller, '::') === false || $this->isRouteExcluded($controller)) {
+                    continue;
+                }
+
+                // If the route is accessible anonymously via access_control, we need to check the controller code.
+                $anonymousToken = new AnonymousToken($this->secret, 'anon.', []);
+                $request = Request::create($route->getPath());
+                $attributes = [AuthenticatedVoter::IS_AUTHENTICATED_ANONYMOUSLY];
+                if (strpos($route->getPath(), 'login') !== false) {
+                    $x = 1;
+                }
+                if ($this->accessDecisionManager->decide($anonymousToken, $attributes, $request, true)) {
                     $controllers[] = $controller;
                 }
+                $checkedCounter++;
             }
         }
 
         // Check if all valid routes have a security check
-        $noSecurityCounter = 0;
-        $checkedCounter = 0;
         foreach ($controllers as $controller) {
             $parts = explode('::', $controller);
             if (count($parts) !== 2) {
@@ -118,7 +139,6 @@ class CheckRouteSecurityCommand extends Command
                 $output->writeln("<error>No security checks were found in controller method '{$controller}'</error>");
                 $noSecurityCounter++;
             }
-            $checkedCounter++;
         }
 
         $checkedStyle = $noSecurityCounter === 0 ? 'info' : 'error';
